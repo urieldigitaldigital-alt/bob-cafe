@@ -1,0 +1,56 @@
+<!doctype html>
+<html lang="es">
+  <head>
+    <meta charset="UTF-8" />
+    <link rel="icon" type="image/svg+xml" href="/bob-cafe/favicon.svg" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <meta name="description" content="BOB'S — Waffles & Café. Café de especialidad, brunch y buenos momentos en Pinamar." />
+    <meta name="theme-color" content="#0b0906" />
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <link
+      href="https://fonts.googleapis.com/css2?family=Poppins:wght@400;500;600;700;800;900&display=swap"
+      rel="stylesheet"
+    />
+    <title>BOB'S — Waffles & Café</title>
+    <script type="module" crossorigin src="/bob-cafe/assets/index-DUxkDl6y.js"></script>
+    <link rel="stylesheet" crossorigin href="/bob-cafe/assets/index-CeNYAACS.css">
+  </head>
+  <body>
+    <div id="root"></div>
+    <script>
+      // Runs independently of the React bundle, so it still gives a visible
+      // signal if the module script below never executes at all (blocked,
+      // 404, parse error) — a case the in-React ErrorBoundary can't catch
+      // since nothing in React ever ran.
+      (function () {
+        var messages = [];
+        function renderFallback() {
+          var root = document.getElementById("root");
+          if (!root || root.childElementCount > 0) return;
+          var detail = messages.length
+            ? messages.join("\n\n")
+            : "No se capturó ningún error — el script principal puede no haberse ejecutado (bloqueado o no encontrado).";
+          root.innerHTML =
+            '<div style="min-height:100vh;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:1rem;padding:2rem;text-align:center;background:#f7f0e2;color:#2a1e13;font-family:sans-serif;">' +
+            '<p style="font-weight:700;font-size:1.1rem;">No se pudo cargar la página.</p>' +
+            '<pre style="max-width:100%;overflow-x:auto;font-size:0.75rem;background:#ece0c7;padding:1rem;border-radius:0.5rem;text-align:left;white-space:pre-wrap;word-break:break-word;">' +
+            detail.replace(/</g, "&lt;") +
+            "</pre></div>";
+        }
+        window.addEventListener("error", function (e) {
+          messages.push((e.error && e.error.stack) || e.message || String(e));
+          renderFallback();
+        });
+        window.addEventListener("unhandledrejection", function (e) {
+          var reason = e.reason;
+          messages.push(
+            "Unhandled rejection: " + ((reason && reason.stack) || reason),
+          );
+          renderFallback();
+        });
+        setTimeout(renderFallback, 5000);
+      })();
+    </script>
+  </body>
+</html>
