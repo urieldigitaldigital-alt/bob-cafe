@@ -341,7 +341,7 @@ export function Hero() {
     <section
       id="inicio"
       ref={sectionRef}
-      className="relative h-dvh w-full overflow-hidden bg-espresso"
+      className="relative h-[calc(var(--app-vh,1vh)*100)] w-full overflow-hidden bg-espresso"
     >
       {!mediaFailed && isMobile && (
         <canvas
