@@ -5,7 +5,9 @@ import { siteConfig } from "@/config/site";
 import { PlaceholderVideoNote } from "@/components/ui/Placeholder";
 import { useIsMobile } from "@/hooks/useIsMobile";
 
-const HERO_VIDEO_SRC = "/media/hero.mp4";
+// BASE_URL is "/" locally but "/bob-cafe/" on GitHub Pages — prefix every
+// public/ asset reference with it so paths resolve under either.
+const HERO_VIDEO_SRC = `${import.meta.env.BASE_URL}media/hero.mp4`;
 
 // Mobile renders the hero as a scrubbed frame sequence instead of a <video>.
 // Scroll-linked video (setting currentTime while paused) is fundamentally
@@ -15,7 +17,7 @@ const HERO_VIDEO_SRC = "/media/hero.mp4";
 // and behaves identically on every browser.
 const FRAME_COUNT = 96;
 const HERO_FRAME_SRC = (i: number) =>
-  `/media/hero-mobile-frames/frame-${String(i + 1).padStart(3, "0")}.jpg`;
+  `${import.meta.env.BASE_URL}media/hero-mobile-frames/frame-${String(i + 1).padStart(3, "0")}.jpg`;
 
 function drawFrameOnCanvas(
   canvas: HTMLCanvasElement | null,
