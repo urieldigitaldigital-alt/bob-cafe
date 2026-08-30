@@ -1,0 +1,231 @@
+@import "tailwindcss";
+
+@theme {
+  /* ---- Color system — light cream café base, dark espresso accents, brass gold, terracotta ---- */
+  --color-background: #f7f0e2;
+  --color-background-soft: #efe4cd;
+  --color-foreground: #2a1e13;
+  --color-foreground-muted: #6f5f4b;
+
+  --color-primary: #a8752e;
+  --color-primary-foreground: #fbf6ec;
+
+  --color-secondary: #ece0c7;
+  --color-secondary-foreground: #2a1e13;
+
+  --color-accent: #a8482a;
+  --color-accent-foreground: #fbf6ec;
+
+  --color-cream: #f4ede0;
+  --color-espresso: #1a140d;
+  --color-line: #e2d3b3;
+
+  /* ---- Type system ---- */
+  --font-display: "Poppins", "Helvetica Neue", sans-serif;
+  --font-body: "Poppins", "Helvetica Neue", sans-serif;
+
+  /* ---- Motion ---- */
+  --ease-premium: cubic-bezier(0.22, 1, 0.36, 1);
+
+  --breakpoint-xs: 22.5rem;
+}
+
+@layer base {
+  * {
+    border-color: var(--color-line);
+  }
+
+  html {
+    background-color: var(--color-background);
+    color-scheme: light;
+  }
+
+  body {
+    background-color: var(--color-background);
+    color: var(--color-foreground);
+    font-family: var(--font-body);
+    font-weight: 400;
+    -webkit-font-smoothing: antialiased;
+    text-rendering: optimizeLegibility;
+    overflow-x: hidden;
+  }
+
+  ::selection {
+    background-color: var(--color-primary);
+    color: var(--color-primary-foreground);
+  }
+
+  h1, h2, h3, h4 {
+    font-family: var(--font-display);
+    letter-spacing: -0.01em;
+  }
+
+  @media (prefers-reduced-motion: reduce) {
+    *, *::before, *::after {
+      animation-duration: 0.001ms !important;
+      animation-iteration-count: 1 !important;
+      transition-duration: 0.001ms !important;
+      scroll-behavior: auto !important;
+    }
+  }
+}
+
+@layer utilities {
+  .text-balance {
+    text-wrap: balance;
+  }
+
+  .container-edit {
+    width: 100%;
+    max-width: 90rem;
+    margin-inline: auto;
+    padding-inline: 1.5rem;
+  }
+
+  @media (min-width: 48rem) {
+    .container-edit {
+      padding-inline: 3rem;
+    }
+  }
+
+  .noise-overlay {
+    position: relative;
+  }
+
+  .noise-overlay::after {
+    content: "";
+    position: absolute;
+    inset: 0;
+    pointer-events: none;
+    opacity: 0.035;
+    mix-blend-mode: overlay;
+    background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='120' height='120'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.9' numOctaves='2' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23n)'/%3E%3C/svg%3E");
+  }
+
+  .link-underline {
+    position: relative;
+    text-decoration: none;
+  }
+
+  .link-underline::after {
+    content: "";
+    position: absolute;
+    left: 0;
+    bottom: -0.2em;
+    width: 100%;
+    height: 1px;
+    background: currentColor;
+    transform: scaleX(0);
+    transform-origin: right;
+    transition: transform 0.5s var(--ease-premium);
+  }
+
+  .link-underline:hover::after {
+    transform: scaleX(1);
+    transform-origin: left;
+  }
+
+  @keyframes fade-in {
+    from {
+      opacity: 0;
+      transform: translateY(6px);
+    }
+    to {
+      opacity: 1;
+      transform: translateY(0);
+    }
+  }
+
+  .animate-in.fade-in {
+    animation: fade-in 300ms var(--ease-premium) both;
+  }
+}
+
+html {
+  scrollbar-width: thin;
+  scrollbar-color: var(--color-primary) var(--color-background);
+}
+
+::-webkit-scrollbar {
+  width: 8px;
+}
+
+::-webkit-scrollbar-track {
+  background: var(--color-background);
+}
+
+::-webkit-scrollbar-thumb {
+  background: var(--color-primary);
+  border-radius: 999px;
+  opacity: 0.6;
+}
+
+/* ---- Card fan carousel — base layout the component's GSAP transforms
+   animate away from. Heights mirror the JS breakpoints in
+   card-fan-carousel.tsx so getHeightMultiplier's "ideal" values line up. ---- */
+.fan-layout {
+  height: 22rem;
+}
+
+.fan-card {
+  position: absolute;
+  top: 50%;
+  left: 50%;
+  width: 11rem;
+  height: 19rem;
+  margin-top: -9.5rem;
+  margin-left: -5.5rem;
+  overflow: hidden;
+  border-radius: 1.25rem;
+  box-shadow: 0 20px 45px -12px rgba(26, 20, 13, 0.35);
+  transform-origin: center center;
+  will-change: transform;
+}
+
+@media (min-width: 480px) {
+  .fan-layout {
+    height: 26rem;
+  }
+  .fan-card {
+    width: 12.5rem;
+    height: 21.5rem;
+    margin-top: -10.75rem;
+    margin-left: -6.25rem;
+  }
+}
+
+@media (min-width: 640px) {
+  .fan-layout {
+    height: 28rem;
+  }
+  .fan-card {
+    width: 13.5rem;
+    height: 23rem;
+    margin-top: -11.5rem;
+    margin-left: -6.75rem;
+  }
+}
+
+@media (min-width: 768px) {
+  .fan-layout {
+    height: 34rem;
+  }
+  .fan-card {
+    width: 16rem;
+    height: 27.5rem;
+    margin-top: -13.75rem;
+    margin-left: -8rem;
+  }
+}
+
+@media (min-width: 1024px) {
+  .fan-layout {
+    height: 38rem;
+  }
+  .fan-card {
+    width: 18rem;
+    height: 31rem;
+    margin-top: -15.5rem;
+    margin-left: -9rem;
+  }
+}
