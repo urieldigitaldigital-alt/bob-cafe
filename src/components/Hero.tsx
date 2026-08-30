@@ -6,13 +6,76 @@ import { PlaceholderVideoNote } from "@/components/ui/Placeholder";
 import { useIsMobile } from "@/hooks/useIsMobile";
 
 const HERO_VIDEO_SRC = "/media/hero.mp4";
-/** Optional portrait-oriented cut for phones — drop a file here to use it.
- * Falls back to the desktop video automatically if it isn't there yet. */
-const HERO_VIDEO_SRC_MOBILE = "/media/hero-mobile.mp4";
+
+// Mobile renders the hero as a scrubbed frame sequence instead of a <video>.
+// Scroll-linked video (setting currentTime while paused) is fundamentally
+// unreliable on iOS Safari — it stops repainting once paused, so scrubbing
+// just freezes on one frame no matter how it's primed. A canvas drawing
+// preloaded images has none of that video-element autoplay/pause baggage
+// and behaves identically on every browser.
+const FRAME_COUNT = 96;
+const HERO_FRAME_SRC = (i: number) =>
+  `/media/hero-mobile-frames/frame-${String(i + 1).padStart(3, "0")}.jpg`;
+
+function drawFrameOnCanvas(
+  canvas: HTMLCanvasElement | null,
+  images: HTMLImageElement[],
+  loaded: boolean[],
+  index: number,
+) {
+  if (!canvas || !images.length) return;
+
+  let idx = index;
+  while (idx > 0 && !loaded[idx]) idx--;
+  if (!loaded[idx]) {
+    idx = index;
+    while (idx < images.length - 1 && !loaded[idx]) idx++;
+  }
+  if (!loaded[idx]) return;
+
+  const img = images[idx];
+  const ctx = canvas.getContext("2d");
+  if (!ctx) return;
+
+  const dpr = Math.min(window.devicePixelRatio || 1, 2);
+  const displayWidth = canvas.clientWidth;
+  const displayHeight = canvas.clientHeight;
+  if (!displayWidth || !displayHeight) return;
+
+  const targetW = Math.round(displayWidth * dpr);
+  const targetH = Math.round(displayHeight * dpr);
+  if (canvas.width !== targetW || canvas.height !== targetH) {
+    canvas.width = targetW;
+    canvas.height = targetH;
+  }
+  ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+
+  // Mimic CSS object-fit: cover, centered.
+  const imgAspect = img.naturalWidth / img.naturalHeight;
+  const canvasAspect = displayWidth / displayHeight;
+  let drawWidth: number;
+  let drawHeight: number;
+  if (imgAspect > canvasAspect) {
+    drawHeight = displayHeight;
+    drawWidth = drawHeight * imgAspect;
+  } else {
+    drawWidth = displayWidth;
+    drawHeight = drawWidth / imgAspect;
+  }
+  const offsetX = (displayWidth - drawWidth) / 2;
+  const offsetY = (displayHeight - drawHeight) / 2;
+
+  ctx.clearRect(0, 0, displayWidth, displayHeight);
+  ctx.drawImage(img, offsetX, offsetY, drawWidth, drawHeight);
+}
 
 export function Hero() {
   const sectionRef = useRef<HTMLElement>(null);
   const videoRef = useRef<HTMLVideoElement>(null);
+  const canvasRef = useRef<HTMLCanvasElement>(null);
+  const framesRef = useRef<HTMLImageElement[]>([]);
+  const framesLoadedRef = useRef<boolean[]>([]);
+  const lastFrameIndexRef = useRef(0);
   const fallbackRef = useRef<HTMLDivElement>(null);
   const titleRef = useRef<HTMLDivElement>(null);
   const titleTextRef = useRef<HTMLDivElement>(null);
@@ -21,23 +84,20 @@ export function Hero() {
   const scrollCueRef = useRef<HTMLDivElement>(null);
   const bottomFadeRef = useRef<HTMLDivElement>(null);
   const isMobile = useIsMobile();
-  const [mobileSourceFailed, setMobileSourceFailed] = useState(false);
-  const [videoReady, setVideoReady] = useState(false);
-  const [videoFailed, setVideoFailed] = useState(false);
-
-  const videoSrc = isMobile && !mobileSourceFailed ? HERO_VIDEO_SRC_MOBILE : HERO_VIDEO_SRC;
+  const [mediaReady, setMediaReady] = useState(false);
+  const [mediaFailed, setMediaFailed] = useState(false);
 
   useEffect(() => {
-    setVideoReady(false);
-  }, [videoSrc]);
+    setMediaReady(false);
+    setMediaFailed(false);
+  }, [isMobile]);
 
+  // Desktop: scroll-scrubbed <video>.
   useEffect(() => {
+    if (isMobile) return;
     const video = videoRef.current;
     if (!video) return;
 
-    // React doesn't reliably apply the `muted` JSX attribute as a DOM
-    // property in Safari, and Safari's autoplay gate checks the property —
-    // set it imperatively so the priming play() below is actually allowed.
     video.muted = true;
     video.defaultMuted = true;
 
@@ -46,17 +106,9 @@ export function Hero() {
       _primeVideo?: () => void;
     };
 
-    // iOS Safari stops repainting a <video> once it's fully paused, so
-    // scrubbing currentTime during scroll would just freeze on one frame.
-    // Keeping it technically "playing" at rate 0 (instead of pausing) keeps
-    // the decode/paint pipeline alive without the video advancing on its
-    // own, so scroll-driven currentTime updates render live. Guarded with
-    // _priming so overlapping calls (StrictMode's double effect invocation,
-    // the readyState check racing the event, a scroll-triggered retry) don't
-    // fire play() concurrently — a second call while one is in flight
-    // interrupts/aborts the first and leaves the video paused. If a call is
-    // rejected (e.g. a backgrounded tab), the flag resets so a later retry
-    // — like the one in the scroll handler below — can try again.
+    // Keeping the video technically "playing" at rate 0 (instead of
+    // pausing) keeps the decode/paint pipeline alive so scroll-driven
+    // currentTime updates keep rendering instead of freezing on one frame.
     const primeVideo = () => {
       if (primeState._priming || !video.paused) return;
       primeState._priming = true;
@@ -73,18 +125,10 @@ export function Hero() {
     primeState._primeVideo = primeVideo;
 
     const onLoaded = () => {
-      setVideoReady(true);
+      setMediaReady(true);
       primeVideo();
     };
-    const onError = () => {
-      // The phone-specific cut isn't there yet — fall back to the desktop
-      // video instead of showing the "no video" placeholder.
-      if (videoSrc === HERO_VIDEO_SRC_MOBILE) {
-        setMobileSourceFailed(true);
-      } else {
-        setVideoFailed(true);
-      }
-    };
+    const onError = () => setMediaFailed(true);
 
     video.addEventListener("loadedmetadata", onLoaded);
     video.addEventListener("error", onError);
@@ -103,7 +147,55 @@ export function Hero() {
       video.removeEventListener("error", onError);
       window.clearTimeout(failTimer);
     };
-  }, [videoSrc]);
+  }, [isMobile]);
+
+  // Mobile: preload the frame sequence and paint frame 0 as soon as it's in.
+  useEffect(() => {
+    if (!isMobile) return;
+    let cancelled = false;
+    const images: HTMLImageElement[] = [];
+    const loaded: boolean[] = new Array(FRAME_COUNT).fill(false);
+    framesRef.current = images;
+    framesLoadedRef.current = loaded;
+
+    for (let i = 0; i < FRAME_COUNT; i++) {
+      const img = new Image();
+      img.src = HERO_FRAME_SRC(i);
+      img.onload = () => {
+        if (cancelled) return;
+        loaded[i] = true;
+        if (i === 0) {
+          setMediaReady(true);
+          drawFrameOnCanvas(canvasRef.current, images, loaded, 0);
+        }
+      };
+      img.onerror = () => {
+        if (cancelled || i !== 0) return;
+        setMediaFailed(true);
+      };
+      images.push(img);
+    }
+
+    const failTimer = window.setTimeout(() => {
+      if (!loaded[0]) setMediaFailed(true);
+    }, 3000);
+
+    const onResize = () => {
+      drawFrameOnCanvas(
+        canvasRef.current,
+        framesRef.current,
+        framesLoadedRef.current,
+        lastFrameIndexRef.current,
+      );
+    };
+    window.addEventListener("resize", onResize);
+
+    return () => {
+      cancelled = true;
+      window.clearTimeout(failTimer);
+      window.removeEventListener("resize", onResize);
+    };
+  }, [isMobile]);
 
   useEffect(() => {
     const section = sectionRef.current;
@@ -147,7 +239,16 @@ export function Hero() {
         scrub: 0.2,
         anticipatePin: 1,
         onUpdate: (self) => {
-          if (video && video.duration && !Number.isNaN(video.duration)) {
+          if (isMobile) {
+            const index = Math.round(self.progress * (FRAME_COUNT - 1));
+            lastFrameIndexRef.current = index;
+            drawFrameOnCanvas(
+              canvasRef.current,
+              framesRef.current,
+              framesLoadedRef.current,
+              index,
+            );
+          } else if (video && video.duration && !Number.isNaN(video.duration)) {
             // If the initial priming play() never went through (e.g. it was
             // rejected while the tab wasn't focused yet), retry once the
             // user is actually scrolling — by now the tab is definitely
@@ -209,7 +310,7 @@ export function Hero() {
     }, section);
 
     return () => ctx.revert();
-  }, [videoReady]);
+  }, [mediaReady, isMobile]);
 
   useEffect(() => {
     if (prefersReducedMotion()) return;
@@ -228,20 +329,32 @@ export function Hero() {
       ref={sectionRef}
       className="relative h-screen w-full overflow-hidden bg-espresso"
     >
-      {!videoFailed && (
+      {!mediaFailed && isMobile && (
+        <canvas
+          ref={canvasRef}
+          aria-hidden="true"
+          className="absolute inset-0 h-full w-full"
+          style={{
+            opacity: mediaReady ? 1 : 0,
+            transition: "opacity 0.6s ease",
+            pointerEvents: "none",
+          }}
+        />
+      )}
+
+      {!mediaFailed && !isMobile && (
         <video
-          key={videoSrc}
           ref={videoRef}
           className="absolute inset-0 h-full w-full object-cover"
-          style={{ opacity: videoReady ? 1 : 0, transition: "opacity 0.6s ease" }}
-          src={videoSrc}
+          style={{ opacity: mediaReady ? 1 : 0, transition: "opacity 0.6s ease" }}
+          src={HERO_VIDEO_SRC}
           muted
           playsInline
           preload="auto"
         />
       )}
 
-      {(!videoReady || videoFailed) && (
+      {(!mediaReady || mediaFailed) && (
         <div ref={fallbackRef} className="absolute inset-0">
           <PlaceholderVideoNote
             label="Cargando video…"
