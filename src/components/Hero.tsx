@@ -41,13 +41,40 @@ export function Hero() {
     video.muted = true;
     video.defaultMuted = true;
 
+    const primeState = video as HTMLVideoElement & {
+      _priming?: boolean;
+      _primeVideo?: () => void;
+    };
+
+    // iOS Safari stops repainting a <video> once it's fully paused, so
+    // scrubbing currentTime during scroll would just freeze on one frame.
+    // Keeping it technically "playing" at rate 0 (instead of pausing) keeps
+    // the decode/paint pipeline alive without the video advancing on its
+    // own, so scroll-driven currentTime updates render live. Guarded with
+    // _priming so overlapping calls (StrictMode's double effect invocation,
+    // the readyState check racing the event, a scroll-triggered retry) don't
+    // fire play() concurrently — a second call while one is in flight
+    // interrupts/aborts the first and leaves the video paused. If a call is
+    // rejected (e.g. a backgrounded tab), the flag resets so a later retry
+    // — like the one in the scroll handler below — can try again.
+    const primeVideo = () => {
+      if (primeState._priming || !video.paused) return;
+      primeState._priming = true;
+      video
+        .play()
+        .then(() => {
+          video.playbackRate = 0;
+        })
+        .catch(() => {
+          primeState._priming = false;
+        });
+    };
+
+    primeState._primeVideo = primeVideo;
+
     const onLoaded = () => {
       setVideoReady(true);
-      // Mobile browsers (iOS Safari in particular) never decode/paint a
-      // frame for a video that's only ever scrubbed via currentTime — the
-      // element stays blank until playback has actually started once.
-      // Priming it with a silent play/pause forces that first frame in.
-      video.play().then(() => video.pause()).catch(() => {});
+      primeVideo();
     };
     const onError = () => {
       // The phone-specific cut isn't there yet — fall back to the desktop
@@ -61,6 +88,11 @@ export function Hero() {
 
     video.addEventListener("loadedmetadata", onLoaded);
     video.addEventListener("error", onError);
+
+    // If the video came from disk/back-forward cache, metadata can already
+    // be available by the time this effect runs — the event already fired
+    // and this listener missed it, so check readyState directly too.
+    if (video.readyState >= 1) onLoaded();
 
     const failTimer = window.setTimeout(() => {
       if (video.readyState === 0) onError();
@@ -116,6 +148,16 @@ export function Hero() {
         anticipatePin: 1,
         onUpdate: (self) => {
           if (video && video.duration && !Number.isNaN(video.duration)) {
+            // If the initial priming play() never went through (e.g. it was
+            // rejected while the tab wasn't focused yet), retry once the
+            // user is actually scrolling — by now the tab is definitely
+            // active, so the retry should succeed where the automatic one
+            // may not have.
+            if (video.paused) {
+              (
+                video as HTMLVideoElement & { _primeVideo?: () => void }
+              )._primeVideo?.();
+            }
             video.currentTime = self.progress * video.duration;
           }
 
