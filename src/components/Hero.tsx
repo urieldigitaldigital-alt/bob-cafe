@@ -35,7 +35,14 @@ export function Hero() {
     const video = videoRef.current;
     if (!video) return;
 
-    const onLoaded = () => setVideoReady(true);
+    const onLoaded = () => {
+      setVideoReady(true);
+      // Mobile browsers (iOS Safari in particular) never decode/paint a
+      // frame for a video that's only ever scrubbed via currentTime — the
+      // element stays blank until playback has actually started once.
+      // Priming it with a silent play/pause forces that first frame in.
+      video.play().then(() => video.pause()).catch(() => {});
+    };
     const onError = () => {
       // The phone-specific cut isn't there yet — fall back to the desktop
       // video instead of showing the "no video" placeholder.
