@@ -35,6 +35,12 @@ export function Hero() {
     const video = videoRef.current;
     if (!video) return;
 
+    // React doesn't reliably apply the `muted` JSX attribute as a DOM
+    // property in Safari, and Safari's autoplay gate checks the property —
+    // set it imperatively so the priming play() below is actually allowed.
+    video.muted = true;
+    video.defaultMuted = true;
+
     const onLoaded = () => {
       setVideoReady(true);
       // Mobile browsers (iOS Safari in particular) never decode/paint a
