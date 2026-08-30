@@ -188,12 +188,24 @@ export function Hero() {
         lastFrameIndexRef.current,
       );
     };
+    // A plain window "resize" listener can miss or lag the layout changes
+    // mobile Safari makes when its address bar collapses/expands mid-scroll
+    // — a ResizeObserver on the canvas itself reacts to the actual box size
+    // changing, regardless of what caused it.
+    let resizeObserver: ResizeObserver | undefined;
+    if (canvasRef.current && typeof ResizeObserver !== "undefined") {
+      resizeObserver = new ResizeObserver(onResize);
+      resizeObserver.observe(canvasRef.current);
+    }
     window.addEventListener("resize", onResize);
+    window.addEventListener("orientationchange", onResize);
 
     return () => {
       cancelled = true;
       window.clearTimeout(failTimer);
       window.removeEventListener("resize", onResize);
+      window.removeEventListener("orientationchange", onResize);
+      resizeObserver?.disconnect();
     };
   }, [isMobile]);
 
@@ -327,7 +339,7 @@ export function Hero() {
     <section
       id="inicio"
       ref={sectionRef}
-      className="relative h-screen w-full overflow-hidden bg-espresso"
+      className="relative h-dvh w-full overflow-hidden bg-espresso"
     >
       {!mediaFailed && isMobile && (
         <canvas
