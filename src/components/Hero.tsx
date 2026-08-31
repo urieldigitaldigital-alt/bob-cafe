@@ -345,9 +345,17 @@ export function Hero() {
     };
 
     gsap.ticker.add(update);
+    // Belt-and-suspenders: some mobile browsers throttle/delay
+    // requestAnimationFrame callbacks (what gsap.ticker runs on) during an
+    // active touch-scroll gesture, which would leave the frame stuck even
+    // though the page is visibly scrolling. A native "scroll" listener is
+    // guaranteed by spec to fire on every real scroll event regardless of
+    // rAF timing, so it backstops exactly that case.
+    window.addEventListener("scroll", update, { passive: true });
 
     return () => {
       gsap.ticker.remove(update);
+      window.removeEventListener("scroll", update);
       gsap.killTweensOf(cue);
     };
   }, [mediaReady, isMobile]);
