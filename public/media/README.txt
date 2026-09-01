@@ -2,16 +2,15 @@ Videos reales de BOB'S — colocar acá:
 
 - hero.mp4              Video del Hero en desktop (pantalla completa, controlado por scroll).
                          Ideal: preparación de café, leche cayendo, waffle, barista, detalles.
-- hero-mobile-frames/   Secuencia de imágenes (frame-001.jpg...) del corte vertical/9:16
-                         para celulares, generada del video móvil. En mobile se pinta
-                         en un <canvas> según el scroll en vez de usar <video> — iOS Safari
-                         no repinta un <video> pausado, así que scrubbear currentTime ahí
-                         se queda congelado en un frame; una secuencia de imágenes no tiene
-                         ese problema en ningún navegador.
-                         Para regenerar/actualizar: reemplazar el video fuente y volver a
-                         extraer con ffmpeg, ej.:
-                         ffmpeg -i video.mp4 -vf "fps=12,scale=540:-1" -q:v 4 \
-                           public/media/hero-mobile-frames/frame-%03d.jpg
+- hero-mobile.mp4       Corte vertical/9:16 del mismo video, para celulares (evita que
+                         object-cover recorte lo importante en pantallas angostas). Si no
+                         existe este archivo, se muestra el placeholder de carga en mobile.
+                         Re-encodear con ffmpeg -g 1 (todo frame clave) para que el scroll
+                         pueda saltar a cualquier punto del video sin depender de decodificar
+                         frames anteriores, ej.:
+                         ffmpeg -i video.mp4 -an -c:v libx264 -profile:v high \
+                           -pix_fmt yuv420p -g 1 -crf 20 -preset medium -movflags +faststart \
+                           public/media/hero-mobile.mp4
 - hero-poster.jpg       Imagen de poster del video del hero (se muestra mientras carga).
 - transition.mp4   Video de la sección de transición de nubes.
                     Ideal: terraza, exterior del local, gente disfrutando un café.
