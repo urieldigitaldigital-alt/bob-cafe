@@ -1,4 +1,5 @@
 import { SmoothScrollProvider } from "@/components/SmoothScrollProvider";
+import { ScrollBackgroundVideo } from "@/components/ScrollBackgroundVideo";
 import { Navbar } from "@/components/Navbar";
 import { Hero } from "@/components/Hero";
 import { MenuGallery } from "@/components/MenuGallery";
@@ -11,6 +12,7 @@ import { Footer } from "@/components/Footer";
 function App() {
   return (
     <SmoothScrollProvider>
+      <ScrollBackgroundVideo />
       <Navbar />
       <main>
         <Hero />
