@@ -8,15 +8,81 @@ import { useIsMobile } from "@/hooks/useIsMobile";
 // BASE_URL is "/" locally but "/bob-cafe/" on GitHub Pages — prefix every
 // public/ asset reference with it so paths resolve under either.
 const HERO_VIDEO_SRC = `${import.meta.env.BASE_URL}media/hero.mp4`;
-const HERO_VIDEO_SRC_MOBILE = `${import.meta.env.BASE_URL}media/hero-mobile.mp4`;
+
+// Mobile renders the hero as a scrubbed frame sequence instead of a <video>.
+// A <video> only repaints on scroll if it was ever unlocked with play(),
+// and that unlock is gated behind each browser/OS's autoplay policy (which
+// can silently refuse it — e.g. iOS Low Power Mode blocks autoplay even
+// when muted) — no amount of priming/retrying guarantees it fires on every
+// device. A canvas drawing preloaded images calls no autoplay-gated API at
+// all, so it can't get stuck on one frame for that reason on any platform.
+const FRAME_COUNT = 96;
+const HERO_FRAME_SRC = (i: number) =>
+  `${import.meta.env.BASE_URL}media/hero-mobile-frames/frame-${String(i + 1).padStart(3, "0")}.jpg`;
 
 // How many extra viewport-heights of scroll the pinned effect spans, on top
 // of the 1 viewport-height the section occupies at rest.
 const SCROLL_SPAN_VH = 250;
 
+function drawFrameOnCanvas(
+  canvas: HTMLCanvasElement | null,
+  images: HTMLImageElement[],
+  loaded: boolean[],
+  index: number,
+) {
+  if (!canvas || !images.length) return;
+
+  let idx = index;
+  while (idx > 0 && !loaded[idx]) idx--;
+  if (!loaded[idx]) {
+    idx = index;
+    while (idx < images.length - 1 && !loaded[idx]) idx++;
+  }
+  if (!loaded[idx]) return;
+
+  const img = images[idx];
+  const ctx = canvas.getContext("2d");
+  if (!ctx) return;
+
+  const dpr = Math.min(window.devicePixelRatio || 1, 2);
+  const displayWidth = canvas.clientWidth;
+  const displayHeight = canvas.clientHeight;
+  if (!displayWidth || !displayHeight) return;
+
+  const targetW = Math.round(displayWidth * dpr);
+  const targetH = Math.round(displayHeight * dpr);
+  if (canvas.width !== targetW || canvas.height !== targetH) {
+    canvas.width = targetW;
+    canvas.height = targetH;
+  }
+  ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+
+  // Mimic CSS object-fit: cover, centered.
+  const imgAspect = img.naturalWidth / img.naturalHeight;
+  const canvasAspect = displayWidth / displayHeight;
+  let drawWidth: number;
+  let drawHeight: number;
+  if (imgAspect > canvasAspect) {
+    drawHeight = displayHeight;
+    drawWidth = drawHeight * imgAspect;
+  } else {
+    drawWidth = displayWidth;
+    drawHeight = drawWidth / imgAspect;
+  }
+  const offsetX = (displayWidth - drawWidth) / 2;
+  const offsetY = (displayHeight - drawHeight) / 2;
+
+  ctx.clearRect(0, 0, displayWidth, displayHeight);
+  ctx.drawImage(img, offsetX, offsetY, drawWidth, drawHeight);
+}
+
 export function Hero() {
   const trackRef = useRef<HTMLElement>(null);
   const videoRef = useRef<HTMLVideoElement>(null);
+  const canvasRef = useRef<HTMLCanvasElement>(null);
+  const framesRef = useRef<HTMLImageElement[]>([]);
+  const framesLoadedRef = useRef<boolean[]>([]);
+  const lastFrameIndexRef = useRef(0);
   const fallbackRef = useRef<HTMLDivElement>(null);
   const titleRef = useRef<HTMLDivElement>(null);
   const titleTextRef = useRef<HTMLDivElement>(null);
@@ -28,27 +94,17 @@ export function Hero() {
   const [mediaReady, setMediaReady] = useState(false);
   const [mediaFailed, setMediaFailed] = useState(false);
 
-  const videoSrc = isMobile ? HERO_VIDEO_SRC_MOBILE : HERO_VIDEO_SRC;
-
   useEffect(() => {
     setMediaReady(false);
     setMediaFailed(false);
-  }, [videoSrc]);
+  }, [isMobile]);
 
-  // Scroll-scrubbed <video>, same source path on every platform. It used to
-  // be swapped for a canvas + preloaded frame images on mobile, working
-  // around iOS Safari's habit of not repainting a paused <video> — but that
-  // wasn't actually the cause of the freeze: the real culprit was GSAP
-  // ScrollTrigger's JS-driven pin (see the scroll-progress effect below,
-  // now replaced with native `position: sticky`). With that fixed, a real
-  // <video> works the same way on every platform once primed correctly.
+  // Desktop: scroll-scrubbed <video>.
   useEffect(() => {
+    if (isMobile) return;
     const video = videoRef.current;
     if (!video) return;
 
-    // React doesn't reliably apply the `muted` JSX attribute as a DOM
-    // property in Safari, and Safari's autoplay gate checks the property —
-    // set it imperatively so the priming play() below is actually allowed.
     video.muted = true;
     video.defaultMuted = true;
 
@@ -57,18 +113,9 @@ export function Hero() {
       _primeVideo?: () => void;
     };
 
-    // iOS Safari stops repainting a <video> once it's fully paused, so
-    // scrubbing currentTime during scroll would just freeze on one frame.
-    // Keeping it technically "playing" at rate 0 (instead of pausing) keeps
-    // the decode/paint pipeline alive without the video advancing on its
-    // own, so scroll-driven currentTime updates render live. Guarded with
-    // _priming so overlapping calls (StrictMode's double effect invocation,
-    // the readyState check racing the event, a scroll-triggered retry)
-    // don't fire play() concurrently — a second call while one is in
-    // flight interrupts/aborts the first and leaves the video paused. If a
-    // call is rejected (e.g. a backgrounded tab), the flag resets so a
-    // later retry — like the one in the scroll handler below — can try
-    // again.
+    // Keeping the video technically "playing" at rate 0 (instead of
+    // pausing) keeps the decode/paint pipeline alive so scroll-driven
+    // currentTime updates keep rendering instead of freezing on one frame.
     const primeVideo = () => {
       if (primeState._priming || !video.paused) return;
       primeState._priming = true;
@@ -107,7 +154,67 @@ export function Hero() {
       video.removeEventListener("error", onError);
       window.clearTimeout(failTimer);
     };
-  }, [videoSrc]);
+  }, [isMobile]);
+
+  // Mobile: preload the frame sequence and paint frame 0 as soon as it's in.
+  useEffect(() => {
+    if (!isMobile) return;
+    let cancelled = false;
+    const images: HTMLImageElement[] = [];
+    const loaded: boolean[] = new Array(FRAME_COUNT).fill(false);
+    framesRef.current = images;
+    framesLoadedRef.current = loaded;
+
+    for (let i = 0; i < FRAME_COUNT; i++) {
+      const img = new Image();
+      img.src = HERO_FRAME_SRC(i);
+      img.onload = () => {
+        if (cancelled) return;
+        loaded[i] = true;
+        if (i === 0) {
+          setMediaReady(true);
+          drawFrameOnCanvas(canvasRef.current, images, loaded, 0);
+        }
+      };
+      img.onerror = () => {
+        if (cancelled || i !== 0) return;
+        setMediaFailed(true);
+      };
+      images.push(img);
+    }
+
+    const failTimer = window.setTimeout(() => {
+      if (!loaded[0]) setMediaFailed(true);
+    }, 3000);
+
+    const onResize = () => {
+      drawFrameOnCanvas(
+        canvasRef.current,
+        framesRef.current,
+        framesLoadedRef.current,
+        lastFrameIndexRef.current,
+      );
+    };
+    // A plain window "resize" listener can miss or lag the layout changes
+    // mobile browsers make when their address bar collapses/expands mid-
+    // scroll — a ResizeObserver on the canvas itself reacts to the actual
+    // box size changing, regardless of what caused it.
+    let resizeObserver: ResizeObserver | undefined;
+    if (canvasRef.current && typeof ResizeObserver !== "undefined") {
+      resizeObserver = new ResizeObserver(onResize);
+      resizeObserver.observe(canvasRef.current);
+    }
+    window.addEventListener("resize", onResize);
+    window.addEventListener("orientationchange", onResize);
+
+    return () => {
+      cancelled = true;
+      window.clearTimeout(failTimer);
+      window.removeEventListener("resize", onResize);
+      window.removeEventListener("orientationchange", onResize);
+      resizeObserver?.disconnect();
+    };
+  }, [isMobile]);
 
   // Scroll-driven progress. This intentionally does NOT use GSAP
   // ScrollTrigger's pin: JS-driven pinning (position: fixed + a spacer
@@ -173,7 +280,16 @@ export function Hero() {
       }
       const progress = smoothProgress;
 
-      if (video && video.duration && !Number.isNaN(video.duration)) {
+      if (isMobile) {
+        const index = Math.round(progress * (FRAME_COUNT - 1));
+        lastFrameIndexRef.current = index;
+        drawFrameOnCanvas(
+          canvasRef.current,
+          framesRef.current,
+          framesLoadedRef.current,
+          index,
+        );
+      } else if (video && video.duration && !Number.isNaN(video.duration)) {
         // If the initial priming play() never went through (e.g. it was
         // rejected while the tab wasn't focused yet), retry once the user
         // is actually scrolling — by now the tab is definitely active, so
@@ -243,7 +359,7 @@ export function Hero() {
       window.removeEventListener("scroll", update);
       gsap.killTweensOf(cue);
     };
-  }, [mediaReady]);
+  }, [mediaReady, isMobile]);
 
   useEffect(() => {
     if (prefersReducedMotion()) return;
@@ -267,13 +383,25 @@ export function Hero() {
         className="sticky top-0 w-full overflow-hidden bg-espresso"
         style={{ height: "calc(var(--app-vh, 1vh) * 100)" }}
       >
-        {!mediaFailed && (
+        {!mediaFailed && isMobile && (
+          <canvas
+            ref={canvasRef}
+            aria-hidden="true"
+            className="absolute inset-0 h-full w-full"
+            style={{
+              opacity: mediaReady ? 1 : 0,
+              transition: "opacity 0.6s ease",
+              pointerEvents: "none",
+            }}
+          />
+        )}
+
+        {!mediaFailed && !isMobile && (
           <video
-            key={videoSrc}
             ref={videoRef}
             className="absolute inset-0 h-full w-full object-cover"
             style={{ opacity: mediaReady ? 1 : 0, transition: "opacity 0.6s ease" }}
-            src={videoSrc}
+            src={HERO_VIDEO_SRC}
             muted
             playsInline
             preload="auto"
