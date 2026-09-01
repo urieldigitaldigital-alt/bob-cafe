@@ -155,7 +155,7 @@ export function ScrollBackgroundVideo() {
     <div
       aria-hidden="true"
       className="fixed inset-0 overflow-hidden bg-black"
-      style={{ zIndex: -1, pointerEvents: "none" }}
+      style={{ zIndex: 0, pointerEvents: "none" }}
     >
       <video
         ref={videoRef}

@@ -13,16 +13,18 @@ function App() {
   return (
     <SmoothScrollProvider>
       <ScrollBackgroundVideo />
-      <Navbar />
-      <main>
-        <Hero />
-        <MenuGallery />
-        <Experience />
-        <Gallery />
-        <Reservation />
-        <Location />
-      </main>
-      <Footer />
+      <div className="relative z-[1]">
+        <Navbar />
+        <main>
+          <Hero />
+          <MenuGallery />
+          <Experience />
+          <Gallery />
+          <Reservation />
+          <Location />
+        </main>
+        <Footer />
+      </div>
     </SmoothScrollProvider>
   );
 }
