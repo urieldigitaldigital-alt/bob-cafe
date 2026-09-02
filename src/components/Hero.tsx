@@ -4,6 +4,7 @@ import { gsap, prefersReducedMotion } from "@/lib/gsap";
 import { siteConfig } from "@/config/site";
 import { PlaceholderVideoNote } from "@/components/ui/Placeholder";
 import { useIsMobile } from "@/hooks/useIsMobile";
+import { cn } from "@/lib/utils";
 
 // BASE_URL is "/" locally but "/bob-cafe/" on GitHub Pages — prefix every
 // public/ asset reference with it so paths resolve under either.
@@ -298,7 +299,16 @@ export function Hero() {
           <video
             key={videoSrc}
             ref={videoRef}
-            className="absolute inset-0 h-full w-full object-cover"
+            className={cn(
+              "absolute inset-0 h-full w-full",
+              // The mobile cut frames its "BOB'S CAFÉ" title close to the
+              // edges — object-cover crops whatever the screen's aspect
+              // ratio doesn't match, cutting the lettering off on narrower
+              // phones. object-contain always shows the full frame instead
+              // (letterboxed against the dark background rather than
+              // cropped). Desktop's wider, more forgiving crop keeps cover.
+              isMobile ? "object-contain" : "object-cover",
+            )}
             style={{ opacity: mediaReady ? 1 : 0, transition: "opacity 0.6s ease" }}
             src={videoSrc}
             muted
