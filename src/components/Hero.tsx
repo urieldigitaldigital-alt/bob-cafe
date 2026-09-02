@@ -40,11 +40,13 @@ export function Hero() {
     const video = videoRef.current;
     if (!video) return;
 
-    // React doesn't reliably apply the `muted` JSX attribute as a DOM
-    // property in Safari, and Safari's autoplay gate checks the property —
-    // set it imperatively so the priming play() below is actually allowed.
+    // React doesn't reliably apply the `muted`/`playsInline` JSX attributes
+    // as DOM properties in Safari, and Safari's autoplay gate checks the
+    // properties, not just the HTML attributes — set them imperatively so
+    // the priming play() below is actually allowed.
     video.muted = true;
     video.defaultMuted = true;
+    video.playsInline = true;
 
     const primeState = video as HTMLVideoElement & {
       _priming?: boolean;
@@ -94,10 +96,35 @@ export function Hero() {
       if (video.readyState === 0) onError();
     }, 2500);
 
+    // Last resort: a real user gesture (a tap, a scroll) is unconditionally
+    // allowed to start media playback by every browser's autoplay policy,
+    // with no exceptions — unlike a programmatic play() call, which some
+    // browser/OS configurations can still refuse even when muted. Only
+    // needed if priming hasn't already succeeded by the time the user
+    // starts interacting.
+    const onFirstInteraction = () => {
+      if (!primeState._primed) primeVideo();
+    };
+    document.addEventListener("touchstart", onFirstInteraction, {
+      passive: true,
+      once: true,
+    });
+    document.addEventListener("scroll", onFirstInteraction, {
+      passive: true,
+      once: true,
+    });
+    document.addEventListener("pointerdown", onFirstInteraction, {
+      passive: true,
+      once: true,
+    });
+
     return () => {
       video.removeEventListener("loadedmetadata", onLoaded);
       video.removeEventListener("error", onError);
       window.clearTimeout(failTimer);
+      document.removeEventListener("touchstart", onFirstInteraction);
+      document.removeEventListener("scroll", onFirstInteraction);
+      document.removeEventListener("pointerdown", onFirstInteraction);
     };
   }, [videoSrc]);
 
@@ -120,9 +147,16 @@ export function Hero() {
     const bottomFade = bottomFadeRef.current;
     if (!track) return;
 
+    // prefers-reduced-motion only skips the decorative flourishes below
+    // (the bouncing scroll cue, title blur/fade, button deploy) — the video
+    // itself keeps scrubbing with scroll regardless. That motion is a
+    // direct 1:1 response to the user's own input, not an autoplaying
+    // animation, and skipping it entirely would leave the video frozen on
+    // frame one for anyone with the OS-level setting on, which reads as
+    // "broken", not "respecting a preference".
     const reduced = prefersReducedMotion();
 
-    if (cue) {
+    if (cue && !reduced) {
       gsap.to(cue, {
         y: 10,
         opacity: 0.4,
@@ -131,12 +165,6 @@ export function Hero() {
         yoyo: true,
         ease: "sine.inOut",
       });
-    }
-
-    if (reduced) {
-      return () => {
-        gsap.killTweensOf(cue);
-      };
     }
 
     // Reveal window: as the video reaches its own "BOB'S CAFÉ" title
@@ -200,29 +228,31 @@ export function Hero() {
         gsap.set(bottomFade, { opacity: maskP });
       }
 
-      const revealP = gsap.utils.clamp(
-        0,
-        1,
-        (progress - REVEAL_START) / REVEAL_SPAN,
-      );
-      const eased = gsap.parseEase("power2.inOut")(revealP);
+      if (!reduced) {
+        const revealP = gsap.utils.clamp(
+          0,
+          1,
+          (progress - REVEAL_START) / REVEAL_SPAN,
+        );
+        const eased = gsap.parseEase("power2.inOut")(revealP);
 
-      if (titleText) {
-        gsap.set(titleText, {
-          opacity: 1 - eased,
-          y: -eased * 24,
-          filter: `blur(${eased * 5}px)`,
-        });
-      }
-      if (menuBtn) {
-        gsap.set(menuBtn, { y: -eased * DEPLOY_DISTANCE });
-      }
-      if (reserveBtn) {
-        gsap.set(reserveBtn, { y: eased * DEPLOY_DISTANCE });
-      }
+        if (titleText) {
+          gsap.set(titleText, {
+            opacity: 1 - eased,
+            y: -eased * 24,
+            filter: `blur(${eased * 5}px)`,
+          });
+        }
+        if (menuBtn) {
+          gsap.set(menuBtn, { y: -eased * DEPLOY_DISTANCE });
+        }
+        if (reserveBtn) {
+          gsap.set(reserveBtn, { y: eased * DEPLOY_DISTANCE });
+        }
 
-      if (cue) {
-        gsap.set(cue, { opacity: progress > 0.05 ? 0 : 1 });
+        if (cue) {
+          gsap.set(cue, { opacity: progress > 0.05 ? 0 : 1 });
+        }
       }
     };
 

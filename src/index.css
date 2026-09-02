@@ -47,7 +47,14 @@
     font-weight: 400;
     -webkit-font-smoothing: antialiased;
     text-rendering: optimizeLegibility;
-    overflow-x: hidden;
+    /* `clip`, not `hidden`: Safari has a long-standing bug where an
+       ancestor with overflow: hidden/auto/scroll breaks position: sticky
+       on descendants — even on the perpendicular axis, where the spec says
+       it shouldn't. `overflow: clip` prevents the same horizontal
+       overflow without establishing a scroll container, so it doesn't
+       trigger that bug (the Hero's sticky video needs body as an
+       unaffected ancestor). */
+    overflow-x: clip;
   }
 
   ::selection {
