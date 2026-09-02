@@ -223,8 +223,14 @@ export function Hero() {
 
       // Dissolve the video into the page background over the final stretch
       // of the pin, so it hands off to the next section with a soft blend
-      // instead of a hard-edged cut.
-      const maskP = Math.max(0, (progress - 0.8) / 0.2);
+      // instead of a hard-edged cut. Driven by rawProgress, not the eased
+      // `progress` — the sticky section physically releases the instant
+      // real scroll (not the smoothed value trailing behind it) reaches
+      // the end of the track, so if this lagged too, a fast scroll could
+      // hit that hard release before the fade had actually finished,
+      // reading as the video "cutting out" mid-transition instead of
+      // dissolving.
+      const maskP = Math.max(0, (rawProgress - 0.75) / 0.25);
       if (bottomFade) {
         gsap.set(bottomFade, { opacity: maskP });
       }
@@ -257,18 +263,32 @@ export function Hero() {
       }
     };
 
-    gsap.ticker.add(update);
+    let lastTick = performance.now();
+    const tick = () => {
+      lastTick = performance.now();
+      update();
+    };
+    gsap.ticker.add(tick);
+
     // Belt-and-suspenders: some mobile browsers throttle/delay
     // requestAnimationFrame callbacks (what gsap.ticker runs on) during an
     // active touch-scroll gesture, which would leave the frame stuck even
     // though the page is visibly scrolling. A native "scroll" listener is
     // guaranteed by spec to fire on every real scroll event regardless of
-    // rAF timing, so it backstops exactly that case.
-    window.addEventListener("scroll", update, { passive: true });
+    // rAF timing. It's a genuine backstop, though — gated to only run if
+    // the rAF loop hasn't ticked very recently — because otherwise both
+    // fire for the same scroll movement on any device where rAF is
+    // keeping up fine, applying the lerp smoothing twice for one real
+    // frame and making it converge inconsistently depending on how often
+    // the scroll event happens to interleave with rAF.
+    const onScroll = () => {
+      if (performance.now() - lastTick > 100) update();
+    };
+    window.addEventListener("scroll", onScroll, { passive: true });
 
     return () => {
-      gsap.ticker.remove(update);
-      window.removeEventListener("scroll", update);
+      gsap.ticker.remove(tick);
+      window.removeEventListener("scroll", onScroll);
       gsap.killTweensOf(cue);
     };
   }, [mediaReady]);
