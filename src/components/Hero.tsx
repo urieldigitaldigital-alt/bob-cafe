@@ -15,9 +15,112 @@ const HERO_VIDEO_SRC_MOBILE = `${import.meta.env.BASE_URL}media/hero-mobile.mp4`
 // of the 1 viewport-height the section occupies at rest.
 const SCROLL_SPAN_VH = 250;
 
+type PrimeState = HTMLVideoElement & {
+  _priming?: boolean;
+  _primed?: boolean;
+  _primeVideo?: () => void;
+};
+
+// Wires up the autoplay-unlock dance for one <video> element and returns a
+// cleanup function. Used for both the sharp foreground video and (on
+// mobile) the blurred backdrop copy — each is its own element, so each
+// needs its own unlock.
+function setupVideoPriming(video: HTMLVideoElement, onLoaded: () => void) {
+  // React doesn't reliably apply the `muted`/`playsInline` JSX attributes
+  // as DOM properties in Safari, and Safari's autoplay gate checks the
+  // properties, not just the HTML attributes — set them imperatively so
+  // the priming play() below is actually allowed.
+  video.muted = true;
+  video.defaultMuted = true;
+  video.playsInline = true;
+
+  const primeState = video as PrimeState;
+
+  // A <video> that has never been played won't repaint on iOS Safari when
+  // currentTime is set programmatically — it stays stuck on whatever frame
+  // it loaded with. Briefly playing it once and pausing again (the
+  // standard, widely-used fix for this) "unlocks" the decoder so all later
+  // scroll-driven seeks render normally. This only needs to succeed once —
+  // after that the video is left paused, which is its normal/expected
+  // resting state. Exposed on the element itself so the scroll-progress
+  // effect can retry it too.
+  const primeVideo = () => {
+    if (primeState._primed || primeState._priming) return;
+    primeState._priming = true;
+    video
+      .play()
+      .then(() => {
+        video.pause();
+        primeState._primed = true;
+        primeState._priming = false;
+      })
+      .catch(() => {
+        primeState._priming = false;
+      });
+  };
+  primeState._primeVideo = primeVideo;
+
+  const handleLoaded = () => {
+    onLoaded();
+    primeVideo();
+  };
+
+  video.addEventListener("loadedmetadata", handleLoaded);
+  // If the video came from disk/back-forward cache, metadata can already
+  // be available by the time this runs — the event already fired and this
+  // listener missed it, so check readyState directly too.
+  if (video.readyState >= 1) handleLoaded();
+
+  // Last resort: a real user gesture (a tap, a scroll) is unconditionally
+  // allowed to start media playback by every browser's autoplay policy,
+  // with no exceptions — unlike a programmatic play() call, which some
+  // browser/OS configurations can still refuse even when muted. Only
+  // needed if priming hasn't already succeeded by the time the user
+  // starts interacting.
+  const onFirstInteraction = () => {
+    if (!primeState._primed) primeVideo();
+  };
+  document.addEventListener("touchstart", onFirstInteraction, {
+    passive: true,
+    once: true,
+  });
+  document.addEventListener("scroll", onFirstInteraction, {
+    passive: true,
+    once: true,
+  });
+  document.addEventListener("pointerdown", onFirstInteraction, {
+    passive: true,
+    once: true,
+  });
+
+  return () => {
+    video.removeEventListener("loadedmetadata", handleLoaded);
+    document.removeEventListener("touchstart", onFirstInteraction);
+    document.removeEventListener("scroll", onFirstInteraction);
+    document.removeEventListener("pointerdown", onFirstInteraction);
+  };
+}
+
+function scrubVideo(video: HTMLVideoElement | null, progress: number) {
+  if (!video || !video.duration || Number.isNaN(video.duration)) return;
+  const primeState = video as PrimeState;
+  if (!primeState._primed) {
+    // Retry the unlock while scrolling — by now the tab is definitely
+    // active/focused, so it should succeed even if the automatic attempt
+    // on load didn't.
+    primeState._primeVideo?.();
+  }
+  video.currentTime = progress * video.duration;
+  // Nudges the renderer on some mobile browsers that otherwise defer
+  // repainting a freshly-seeked video frame until the next unrelated
+  // layout pass.
+  void video.offsetHeight;
+}
+
 export function Hero() {
   const trackRef = useRef<HTMLElement>(null);
   const videoRef = useRef<HTMLVideoElement>(null);
+  const videoBgRef = useRef<HTMLVideoElement>(null);
   const fallbackRef = useRef<HTMLDivElement>(null);
   const titleRef = useRef<HTMLDivElement>(null);
   const titleTextRef = useRef<HTMLDivElement>(null);
@@ -36,98 +139,39 @@ export function Hero() {
     setMediaFailed(false);
   }, [videoSrc]);
 
-  // Scroll-scrubbed <video>, same mechanism on every platform.
+  // Scroll-scrubbed <video>(s), same mechanism on every platform. Mobile
+  // also gets a blurred, full-bleed backdrop copy of the same video (see
+  // the JSX below) — the sharp copy uses object-contain so its "BOB'S CAFÉ"
+  // lettering never gets cropped, but that can leave letterboxed padding on
+  // phone aspect ratios that don't match the source video, which read as a
+  // harsh flat-color edge. Filling the gaps with a blurred, oversized
+  // object-cover copy of the same footage (the technique Instagram/TikTok
+  // use for mismatched-aspect video) removes that hard line entirely.
   useEffect(() => {
     const video = videoRef.current;
     if (!video) return;
 
-    // React doesn't reliably apply the `muted`/`playsInline` JSX attributes
-    // as DOM properties in Safari, and Safari's autoplay gate checks the
-    // properties, not just the HTML attributes — set them imperatively so
-    // the priming play() below is actually allowed.
-    video.muted = true;
-    video.defaultMuted = true;
-    video.playsInline = true;
+    let bgCleanup: (() => void) | undefined;
+    const cleanup = setupVideoPriming(video, () => setMediaReady(true));
+    const bgVideo = videoBgRef.current;
+    if (bgVideo) {
+      bgCleanup = setupVideoPriming(bgVideo, () => {});
+    }
 
-    const primeState = video as HTMLVideoElement & {
-      _priming?: boolean;
-      _primed?: boolean;
-      _primeVideo?: () => void;
-    };
-
-    // A <video> that has never been played won't repaint on iOS Safari
-    // when currentTime is set programmatically — it stays stuck on
-    // whatever frame it loaded with. Briefly playing it once and pausing
-    // again (the standard, widely-used fix for this) "unlocks" the decoder
-    // so all later scroll-driven seeks render normally. This only needs to
-    // succeed once — after that the video is left paused, which is its
-    // normal/expected resting state. Exposed on the element itself so the
-    // scroll-progress effect (a separate effect below) can retry it too.
-    const primeVideo = () => {
-      if (primeState._primed || primeState._priming) return;
-      primeState._priming = true;
-      video
-        .play()
-        .then(() => {
-          video.pause();
-          primeState._primed = true;
-          primeState._priming = false;
-        })
-        .catch(() => {
-          primeState._priming = false;
-        });
-    };
-    primeState._primeVideo = primeVideo;
-
-    const onLoaded = () => {
-      setMediaReady(true);
-      primeVideo();
-    };
     const onError = () => setMediaFailed(true);
-
-    video.addEventListener("loadedmetadata", onLoaded);
     video.addEventListener("error", onError);
-
-    // If the video came from disk/back-forward cache, metadata can already
-    // be available by the time this effect runs — the event already fired
-    // and this listener missed it, so check readyState directly too.
-    if (video.readyState >= 1) onLoaded();
 
     const failTimer = window.setTimeout(() => {
       if (video.readyState === 0) onError();
     }, 2500);
 
-    // Last resort: a real user gesture (a tap, a scroll) is unconditionally
-    // allowed to start media playback by every browser's autoplay policy,
-    // with no exceptions — unlike a programmatic play() call, which some
-    // browser/OS configurations can still refuse even when muted. Only
-    // needed if priming hasn't already succeeded by the time the user
-    // starts interacting.
-    const onFirstInteraction = () => {
-      if (!primeState._primed) primeVideo();
-    };
-    document.addEventListener("touchstart", onFirstInteraction, {
-      passive: true,
-      once: true,
-    });
-    document.addEventListener("scroll", onFirstInteraction, {
-      passive: true,
-      once: true,
-    });
-    document.addEventListener("pointerdown", onFirstInteraction, {
-      passive: true,
-      once: true,
-    });
-
     return () => {
-      video.removeEventListener("loadedmetadata", onLoaded);
+      cleanup();
+      bgCleanup?.();
       video.removeEventListener("error", onError);
       window.clearTimeout(failTimer);
-      document.removeEventListener("touchstart", onFirstInteraction);
-      document.removeEventListener("scroll", onFirstInteraction);
-      document.removeEventListener("pointerdown", onFirstInteraction);
     };
-  }, [videoSrc]);
+  }, [videoSrc, isMobile]);
 
   // Scroll-driven progress. This intentionally does NOT use GSAP
   // ScrollTrigger's pin: JS-driven pinning (position: fixed + a spacer
@@ -140,6 +184,7 @@ export function Hero() {
   useEffect(() => {
     const track = trackRef.current;
     const video = videoRef.current;
+    const videoBg = videoBgRef.current;
     const fallback = fallbackRef.current;
     const cue = scrollCueRef.current;
     const titleText = titleTextRef.current;
@@ -194,23 +239,8 @@ export function Hero() {
       }
       const progress = smoothProgress;
 
-      if (video && video.duration && !Number.isNaN(video.duration)) {
-        const primeState = video as HTMLVideoElement & {
-          _primed?: boolean;
-          _primeVideo?: () => void;
-        };
-        if (!primeState._primed) {
-          // Retry the unlock while scrolling — by now the tab is
-          // definitely active/focused, so it should succeed even if the
-          // automatic attempt on load didn't.
-          primeState._primeVideo?.();
-        }
-        video.currentTime = progress * video.duration;
-        // Nudges the renderer on some mobile browsers that otherwise defer
-        // repainting a freshly-seeked video frame until the next unrelated
-        // layout pass.
-        void video.offsetHeight;
-      }
+      scrubVideo(video, progress);
+      scrubVideo(videoBg, progress);
 
       const exitP = Math.max(0, (progress - 0.72) / 0.28);
 
@@ -315,6 +345,29 @@ export function Hero() {
         className="sticky top-0 w-full overflow-hidden bg-espresso"
         style={{ height: "calc(var(--app-vh, 1vh) * 100)" }}
       >
+        {!mediaFailed && isMobile && (
+          // Blurred, oversized copy filling the whole frame — shows through
+          // wherever the sharp video's object-contain letterboxing leaves a
+          // gap, so there's no hard-edged flat-color seam. Purely
+          // decorative background fill: hidden from assistive tech.
+          <video
+            key={`${videoSrc}-bg`}
+            ref={videoBgRef}
+            aria-hidden="true"
+            className="absolute inset-0 h-full w-full object-cover"
+            style={{
+              opacity: mediaReady ? 1 : 0,
+              transition: "opacity 0.6s ease",
+              filter: "blur(50px) brightness(0.55) saturate(1.15)",
+              transform: "scale(1.2)",
+            }}
+            src={videoSrc}
+            muted
+            playsInline
+            preload="auto"
+          />
+        )}
+
         {!mediaFailed && (
           <video
             key={videoSrc}
@@ -324,9 +377,10 @@ export function Hero() {
               // The mobile cut frames its "BOB'S CAFÉ" title close to the
               // edges — object-cover crops whatever the screen's aspect
               // ratio doesn't match, cutting the lettering off on narrower
-              // phones. object-contain always shows the full frame instead
-              // (letterboxed against the dark background rather than
-              // cropped). Desktop's wider, more forgiving crop keeps cover.
+              // phones. object-contain always shows the full frame instead;
+              // the blurred backdrop video above fills the letterboxed
+              // gaps that can leave. Desktop's wider, more forgiving crop
+              // keeps cover.
               isMobile ? "object-contain" : "object-cover",
             )}
             style={{ opacity: mediaReady ? 1 : 0, transition: "opacity 0.6s ease" }}
@@ -358,7 +412,7 @@ export function Hero() {
           className="pointer-events-none absolute inset-x-0 bottom-0 z-[5] h-[12%] bg-gradient-to-b from-transparent to-background opacity-0"
         />
 
-        <div className="relative z-10 flex h-full flex-col items-center justify-center px-6 text-center">
+        <div className="relative z-10 flex h-full flex-col items-center justify-center px-6 pb-[8vh] text-center">
           <div ref={titleRef} className="flex flex-col items-center">
             <div ref={titleTextRef} className="flex flex-col items-center">
               <span className="mb-5 font-body text-xs font-medium tracking-[0.4em] text-primary uppercase">
@@ -375,7 +429,7 @@ export function Hero() {
               </p>
             </div>
 
-            <div className="mt-10 flex flex-col items-center gap-4">
+            <div className="mt-8 flex flex-col items-center gap-4">
               <a
                 ref={menuBtnRef}
                 href="#menu"
@@ -396,7 +450,7 @@ export function Hero() {
 
         <div
           ref={scrollCueRef}
-          className="absolute bottom-8 left-1/2 z-10 flex -translate-x-1/2 flex-col items-center gap-1 text-cream/60"
+          className="absolute bottom-4 left-1/2 z-10 flex -translate-x-1/2 flex-col items-center gap-1 text-cream/60"
         >
           <span className="font-body text-[10px] tracking-[0.3em] uppercase">Scroll</span>
           <ChevronDown className="h-4 w-4" />
